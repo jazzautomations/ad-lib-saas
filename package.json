@@ -1,0 +1,22 @@
+{
+  "name": "ad-lib-saas",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AD.LIB Studio — Deploy any ad format from the library via agentic video pipelines",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "cd apps/web && bun dev",
+    "dev:api": "cd apps/api && bun dev",
+    "build": "bun run build:packages && bun run build:apps",
+    "build:packages": "for pkg in packages/*/; do (cd \"$pkg\" && bun run build 2>/dev/null || true); done",
+    "build:apps": "for app in apps/*/; do (cd \"$app\" && bun run build 2>/dev/null || true); done",
+    "lint": "bun x prettier --check 'packages/*/src/**/*.ts' 'apps/*/src/**/*.ts'",
+    "format": "bun x prettier --write 'packages/*/src/**/*.ts' 'apps/*/src/**/*.ts'"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
