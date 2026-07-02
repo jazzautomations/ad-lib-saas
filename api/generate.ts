@@ -4,9 +4,13 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   const API_KEY = process.env.OPENCODE_ZEN_API_KEY || "sk-foDztWSZGJPANBYXNKJH84ejqqVQLNE4VwskmZqgj8Kxi2TCctR7LMkz56VO74np";
-  const MODEL = "big-pickle";
+  const MODEL = "deepseek-v4-flash-free";
 
-  const SYSTEM_PROMPT = `You are AD.LIB Studio — an elite ad creative director and copywriter for paid social. Output in clean markdown with timing markers like [0:00-0:03]. Be specific, creative, and production-ready. Start your response immediately with the answer — do not output thinking steps.`;
+  const SYSTEM_PROMPT = `You are AD.LIB Studio — an elite ad creative director and copywriter for paid social.
+
+Output ONLY the final ad script. No reasoning, no thinking, no meta-commentary. Start your response immediately with the answer.
+
+Format: clean markdown with timing markers like [0:00-0:03].`;
 
   try {
     const { formatName, formatDesc, subName, quando, hook, estrutura, dica, brief } = await req.json();
@@ -54,7 +58,7 @@ Be specific, creative, and production-ready. Output in clean markdown.`;
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },
         ],
-        max_tokens: 16384,
+        max_tokens: 4096,
         temperature: 0.8,
       }),
     });
