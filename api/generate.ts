@@ -3,21 +3,15 @@ import { join } from "path";
 
 const OPENCODE_ZEN_URL = "https://opencode.ai/zen/v1/chat/completions";
 const MODEL = "deepseek-v4-flash-free";
+const API_KEY = process.env.OPENCODE_ZEN_API_KEY || "sk-foDztWSZGJPANBYXNKJH84ejqqVQLNE4VwskmZqgj8Kxi2TCctR7LMkz56VO74np";
 
 const SYSTEM_PROMPT = `You are AD.LIB Studio — an elite ad creative director and copywriter for paid social.
 
-Given a brief and ad format/sub-format, generate a COMPLETE production-ready ad creative:
-
-1. **Opening Hook** (first 3 seconds) — 3+ variations
-2. **Scene-by-scene breakdown** with timing, visual direction, dialogue/text overlay
-3. **CTA** — 3 options
-4. **Platform adaptation notes**
-5. **Music/Sound direction**
-6. **Estimated total duration**
-7. **Shot list** (camera angles, movements)
+Given a brief and ad format/sub-format, generate a COMPLETE production-ready ad creative.
 
 Use timing markers like [0:00-0:03], [0:03-0:07], etc.
-Output in clean markdown. Be specific, creative, and production-ready.`;
+Output in clean markdown.
+Be specific, creative, and production-ready.`;
 
 function buildPrompt(format: any, sub: any, brief: any): string {
   return `Generate a complete ad creative for:
@@ -35,7 +29,16 @@ HOOK STYLE: ${sub.hook || "N/A"}
 STRUCTURE: ${sub.estrutura || "N/A"}
 PRODUCTION TIP: ${sub.dica || "N/A"}
 
-Generate a full, production-ready ad script with timing markers and visual directions.`;
+Generate a full, production-ready ad script with:
+1. **Opening Hook** (first 3 seconds) — 3 variations
+2. **Scene-by-scene breakdown** with timing, visual direction, dialogue/text overlay
+3. **CTA** — 3 options
+4. **Platform adaptation notes**
+5. **Music/Sound direction**
+6. **Estimated total duration**
+7. **Shot list** (camera angles, movements)
+
+Be specific to the brand. Be creative and bold. Do NOT think out loud — just produce the output.`;
 }
 
 export default async function handler(req: any, res: any) {
@@ -58,9 +61,8 @@ export default async function handler(req: any, res: any) {
     const sub = format.subs[Number(subIndex)];
     if (!sub) return res.status(404).json({ error: "Sub-format not found" });
 
-    const OPENCODE_ZEN_KEY = process.env.OPENCODE_ZEN_API_KEY || "sk-foDztWSZGJPANBYXNKJH84ejqqVQLNE4VwskmZqgj8Kxi2TCctR7LMkz56VO74np";
-    if (!OPENCODE_ZEN_KEY) {
-      return res.status(500).json({ error: "No API key configured" });
+    if (!API_KEY) {
+      return res.status(500).json({ error: "No API key" });
     }
 
     const prompt = buildPrompt(format, sub, brief || {});
@@ -68,7 +70,7 @@ export default async function handler(req: any, res: any) {
     const response = await fetch(OPENCODE_ZEN_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENCODE_ZEN_KEY}`,
+        Authorization: `Bearer ${API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -77,8 +79,8 @@ export default async function handler(req: any, res: any) {
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },
         ],
-        max_tokens: 4096,
-        temperature: 0.8,
+        max_tokens: 8192,
+        temperature: 0.85,
       }),
     });
 
@@ -88,7 +90,9 @@ export default async function handler(req: any, res: any) {
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "No content generated";
+    const choice = data.choices?.[0];
+    const msg = choice?.message;
+    const content = msg?.content || msg?.reasoning_content || "No content generated";
 
     return res.json({
       script: content,
