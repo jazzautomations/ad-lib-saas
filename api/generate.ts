@@ -1,71 +1,71 @@
-import FORMATS from "./formats.json";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 const OPENCODE_ZEN_URL = "https://opencode.ai/zen/v1/chat/completions";
-const OPENCODE_ZEN_KEY = process.env.OPENCODE_ZEN_API_KEY || "";
 const MODEL = "deepseek-v4-flash-free";
 
-const SYSTEM_PROMPT = `You are AD.LIB Studio, an expert ad creative director and copywriter.
-Given a brief and an ad format/sub-format, you generate:
-1. A complete ad script with timing
-2. Visual directions for each scene
-3. Hook variations (3 options)
-4. CTA options
-5. Platform-specific adaptations
-6. Music/sound direction
+const SYSTEM_PROMPT = `You are AD.LIB Studio — an elite ad creative director and copywriter for paid social.
 
-Be specific, creative, and production-ready. Output in clean markdown.
-Use timing markers like [0:00-0:03], [0:03-0:07], etc.`;
+Given a brief and ad format/sub-format, generate a COMPLETE production-ready ad creative:
+
+1. **Hook** — 3 variations for the first 3 seconds
+2. **Scene-by-scene breakdown** — timing [0:00-0:03], visual direction, dialogue/text overlay
+3. **CTA** — 3 options
+4. **Platform adaptation** — aspect ratio, captions, native feel
+5. **Music/Sound direction**
+6. **Estimated duration**
+7. **Shot list** — camera angles, movements
+
+Be SPECIFIC, CREATIVE, and BOLD. Output in clean markdown.
+Write as if presenting to a real client. No filler, no fluff.`;
 
 function buildPrompt(format: any, sub: any, brief: any): string {
-  return `Generate a complete ad creative for:
+  return `Generate a complete ad creative:
 
 BRAND: ${brief.brand || "Brand"}
-PRODUCT: ${brief.product || "Product"}
+PRODUCT: ${brief.product || format.name}
 AUDIENCE: ${brief.audience || "General"}
 OBJECTIVE: ${brief.objective || "Conversions"}
 PLATFORM: ${brief.platform || "TikTok"}
 
-FORMAT: ${format.name} — ${format.desc}
+FORMAT: ${format.name} — ${format.desc || ""}
 SUB-FORMAT: ${sub.name}
-WHEN TO USE: ${sub.quando || "N/A"}
 HOOK STYLE: ${sub.hook || "N/A"}
 STRUCTURE: ${sub.estrutura || "N/A"}
 PRODUCTION TIP: ${sub.dica || "N/A"}
 
-Generate a full, production-ready ad script with:
-1. **Opening Hook** (first 3 seconds) — at least 3 variations
-2. **Scene-by-scene breakdown** with timing, visual direction, and dialogue/text overlay
-3. **CTA** — 3 options
-4. **Platform adaptation notes** (if different from default)
-5. **Music/Sound direction**
-6. **Estimated total duration**
-7. **Shot list** (camera angles, movements)
-
-Make it specific to the brand and product. Be creative and bold.`;
+Generate the full creative now.`;
 }
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "POST only" });
-  }
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
   try {
     const { formatId, subIndex, brief } = req.body;
 
-    if (!formatId || subIndex === undefined) {
+    if (formatId === undefined || subIndex === undefined) {
       return res.status(400).json({ error: "formatId and subIndex required" });
     }
+
+    const filePath = join(process.cwd(), "api", "formats.json");
+    const FORMATS = JSON.parse(readFileSync(filePath, "utf-8"));
 
     const format = FORMATS.find((f: any) => f.id === Number(formatId));
     if (!format) return res.status(404).json({ error: "Format not found" });
 
-    const sub = (format as any).subs[Number(subIndex)];
+    const sub = format.subs?.[Number(subIndex)];
     if (!sub) return res.status(404).json({ error: "Sub-format not found" });
 
+    const OPENCODE_ZEN_KEY = process.env.OPENCODE_ZEN_API_KEY;
     if (!OPENCODE_ZEN_KEY) {
       return res.status(500).json({
-        error: "OPENCODE_ZEN_API_KEY not configured",
-        hint: "Add the key in Vercel Settings > Environment Variables",
+        error: "API key not configured",
+        hint: "Set OPENCODE_ZEN_API_KEY in Vercel env vars",
       });
     }
 
@@ -90,12 +90,11 @@ export default async function handler(req: any, res: any) {
 
     if (!response.ok) {
       const err = await response.text();
-      return res.status(502).json({ error: `OpenCode Zen error: ${err}` });
+      return res.status(502).json({ error: `AI provider error: ${err}` });
     }
 
     const data = await response.json();
-    const content =
-      data.choices?.[0]?.message?.content || "No content generated";
+    const content = data.choices?.[0]?.message?.content || "No content generated";
 
     return res.json({
       script: content,
@@ -104,7 +103,7 @@ export default async function handler(req: any, res: any) {
       model: MODEL,
       tokens: data.usage || {},
     });
-  } catch (e) {
-    return res.status(500).json({ error: (e as Error).message });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
   }
 }

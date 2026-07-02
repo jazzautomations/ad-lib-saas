@@ -1,9 +1,11 @@
-import FORMATS from "./formats.json";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 export default function handler(req: any, res: any) {
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "GET only" });
-  }
+  if (req.method !== "GET") return res.status(405).json({ error: "GET only" });
+
+  const filePath = join(process.cwd(), "api", "formats.json");
+  const FORMATS = JSON.parse(readFileSync(filePath, "utf-8"));
 
   const { id, media, funnel } = req.query;
 
@@ -14,12 +16,12 @@ export default function handler(req: any, res: any) {
   }
 
   let results = [...FORMATS];
-  if (media) results = results.filter((f: any) => f.tipos.includes(media));
-  if (funnel) results = results.filter((f: any) => f.funil.includes(funnel));
+  if (media) results = results.filter((f: any) => f.tipos?.includes(media));
+  if (funnel) results = results.filter((f: any) => f.funil?.includes(funnel));
 
   return res.json({
     formats: results,
     total: results.length,
-    subFormats: results.reduce((a: number, f: any) => a + f.subs.length, 0),
+    subFormats: results.reduce((a: number, f: any) => a + (f.subs?.length || 0), 0),
   });
 }
