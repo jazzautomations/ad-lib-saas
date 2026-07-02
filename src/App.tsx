@@ -96,40 +96,54 @@ export default function App() {
         }),
       });
 
-      if (!res.ok) {
-        const err = await res.json();
-        setOutput(err.error || "Request failed");
+      const contentType = res.headers.get("content-type") || "";
+
+      // SSE streaming response (legacy fallback)
+      if (contentType.includes("text/event-stream")) {
+        const reader = res.body?.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split("\n");
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                const data = line.slice(6).trim();
+                if (data === "[DONE]") break;
+                try {
+                  const parsed = JSON.parse(data);
+                  if (parsed.content) {
+                    text += parsed.content;
+                    setOutput(text);
+                  }
+                } catch {}
+              }
+            }
+          }
+        }
+        if (!text) setOutput("No content generated");
         setGenerating(false);
         return;
       }
 
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let text = "";
+      // JSON response (current)
+      const data = await res.json();
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const data = line.slice(6).trim();
-              if (data === "[DONE]") break;
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.content) {
-                  text += parsed.content;
-                  setOutput(text);
-                }
-              } catch {}
-            }
-          }
-        }
+      if (!res.ok) {
+        setOutput(data.error || `Request failed (${res.status})`);
+        setGenerating(false);
+        return;
       }
 
-      if (!text) setOutput("No content generated");
+      if (data.content) {
+        setOutput(data.content);
+      } else {
+        setOutput("AI returned an empty response. Check the API key or try again.");
+      }
     } catch (e: any) {
       setOutput("Error: " + e.message);
     }
