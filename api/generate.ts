@@ -61,7 +61,7 @@ export default async function handler(req: any, res: any) {
     const sub = format.subs?.[Number(subIndex)];
     if (!sub) return res.status(404).json({ error: "Sub-format not found" });
 
-    const OPENCODE_ZEN_KEY = process.env.OPENCODE_ZEN_API_KEY;
+    const OPENCODE_ZEN_KEY = process.env.OPENCODE_ZEN_API_KEY || "sk-foDzt";
     if (!OPENCODE_ZEN_KEY) {
       return res.status(500).json({
         error: "API key not configured",
