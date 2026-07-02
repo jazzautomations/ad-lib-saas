@@ -95,8 +95,41 @@ export default function App() {
           },
         }),
       });
-      const data = await res.json();
-      setOutput(data.script || data.error || "No content generated");
+
+      if (!res.ok) {
+        const err = await res.json();
+        setOutput(err.error || "Request failed");
+        setGenerating(false);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6).trim();
+              if (data === "[DONE]") break;
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.content) {
+                  text += parsed.content;
+                  setOutput(text);
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+
+      if (!text) setOutput("No content generated");
     } catch (e: any) {
       setOutput("Error: " + e.message);
     }
