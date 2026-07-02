@@ -8,42 +8,40 @@ const SYSTEM_PROMPT = `You are AD.LIB Studio — an elite ad creative director a
 
 Given a brief and ad format/sub-format, generate a COMPLETE production-ready ad creative:
 
-1. **Hook** — 3 variations for the first 3 seconds
-2. **Scene-by-scene breakdown** — timing [0:00-0:03], visual direction, dialogue/text overlay
+1. **Opening Hook** (first 3 seconds) — 3+ variations
+2. **Scene-by-scene breakdown** with timing, visual direction, dialogue/text overlay
 3. **CTA** — 3 options
-4. **Platform adaptation** — aspect ratio, captions, native feel
+4. **Platform adaptation notes**
 5. **Music/Sound direction**
-6. **Estimated duration**
-7. **Shot list** — camera angles, movements
+6. **Estimated total duration**
+7. **Shot list** (camera angles, movements)
 
-Be SPECIFIC, CREATIVE, and BOLD. Output in clean markdown.
-Write as if presenting to a real client. No filler, no fluff.`;
+Use timing markers like [0:00-0:03], [0:03-0:07], etc.
+Output in clean markdown. Be specific, creative, and production-ready.`;
 
 function buildPrompt(format: any, sub: any, brief: any): string {
-  return `Generate a complete ad creative:
+  return `Generate a complete ad creative for:
 
 BRAND: ${brief.brand || "Brand"}
-PRODUCT: ${brief.product || format.name}
+PRODUCT: ${brief.product || "Product"}
 AUDIENCE: ${brief.audience || "General"}
 OBJECTIVE: ${brief.objective || "Conversions"}
 PLATFORM: ${brief.platform || "TikTok"}
 
-FORMAT: ${format.name} — ${format.desc || ""}
+FORMAT: ${format.name} — ${format.desc}
 SUB-FORMAT: ${sub.name}
+WHEN TO USE: ${sub.quando || "N/A"}
 HOOK STYLE: ${sub.hook || "N/A"}
 STRUCTURE: ${sub.estrutura || "N/A"}
 PRODUCTION TIP: ${sub.dica || "N/A"}
 
-Generate the full creative now.`;
+Generate a full, production-ready ad script with timing markers and visual directions.`;
 }
 
 export default async function handler(req: any, res: any) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "POST only" });
+  }
 
   try {
     const { formatId, subIndex, brief } = req.body;
@@ -52,21 +50,17 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "formatId and subIndex required" });
     }
 
-    const filePath = join(process.cwd(), "api", "formats.json");
-    const FORMATS = JSON.parse(readFileSync(filePath, "utf-8"));
-
-    const format = FORMATS.find((f: any) => f.id === Number(formatId));
+    const raw = readFileSync(join(process.cwd(), "api", "formats.json"), "utf-8");
+    const formats = JSON.parse(raw);
+    const format = formats.find((f: any) => f.id === Number(formatId));
     if (!format) return res.status(404).json({ error: "Format not found" });
 
-    const sub = format.subs?.[Number(subIndex)];
+    const sub = format.subs[Number(subIndex)];
     if (!sub) return res.status(404).json({ error: "Sub-format not found" });
 
-    const OPENCODE_ZEN_KEY = process.env.OPENCODE_ZEN_API_KEY || "sk-foDzt";
+    const OPENCODE_ZEN_KEY = process.env.OPENCODE_ZEN_API_KEY || "sk-foDztWSZGJPANBYXNKJH84ejqqVQLNE4VwskmZqgj8Kxi2TCctR7LMkz56VO74np";
     if (!OPENCODE_ZEN_KEY) {
-      return res.status(500).json({
-        error: "API key not configured",
-        hint: "Set OPENCODE_ZEN_API_KEY in Vercel env vars",
-      });
+      return res.status(500).json({ error: "No API key configured" });
     }
 
     const prompt = buildPrompt(format, sub, brief || {});
@@ -103,7 +97,7 @@ export default async function handler(req: any, res: any) {
       model: MODEL,
       tokens: data.usage || {},
     });
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
+  } catch (e) {
+    return res.status(500).json({ error: (e as Error).message });
   }
 }
