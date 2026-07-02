@@ -1,0 +1,13 @@
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{background:#080808;color:#f0f0f0;font-family:'DM Sans',sans-serif;font-size:14px;overflow-x:clip}
+body{min-height:100dvh}
+:root{
+  --bg:#080808;--surf:#0e0e0e;--card:#131313;--card2:#181818;
+  --border:#1d1d1d;--border2:#282828;--text:#f0f0f0;--sub:#999;--muted:#555;--muted2:#333;
+  --red:#e63946;--green:#3ddc84;--yellow:#f4c542;--blue:#5bc8f5;--purple:#c084fc;
+}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+a{color:var(--red);text-decoration:none}
+a:hover{opacity:.8}
