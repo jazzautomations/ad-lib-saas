@@ -1,4 +1,3 @@
-
 import { useState, useMemo } from "react";
 import { FORMATS } from "./lib/formats";
 import type { AdFormat, SubFormat, FunnelStage } from "./lib/types";
@@ -71,22 +70,28 @@ export default function App() {
   };
 
   const handleGenerate = async () => {
-    if (!genSub) return;
+    if (!genSub || !genFormat) return;
     setGenerating(true);
     setOutput("");
 
     try {
+      const subIdx = genFormat.subs.findIndex(s => s.name === genSub.name);
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          format: genFormat,
-          subFormat: genSub,
-          brief: { brand: brief.brand || "Brand", product: brief.product || genFormat?.name, audience: brief.audience || "general", platform: brief.platform || "tiktok" }
+          formatId: genFormat.id,
+          subIndex: subIdx,
+          brief: {
+            brand: brief.brand || "Brand",
+            product: brief.product || genFormat.name,
+            audience: brief.audience || "general",
+            platform: brief.platform || "tiktok",
+          }
         }),
       });
       const data = await res.json();
-      setOutput(data.script || data.storyboard || data.error || "No output");
+      setOutput(data.script || data.error || "No output");
     } catch (e: any) {
       setOutput("Error: " + e.message);
     }
