@@ -69,39 +69,34 @@ export default function App() {
     setOutput("");
   };
 
-  const OPENCODE_KEY = "sk-foDztWSZGJPANBYXNKJH84ejqqVQLNE4VwskmZqgj8Kxi2TCctR7LMkz56VO74np";
-
-  const buildPrompt = (format: AdFormat, sub: SubFormat, b: any) => {
-    return `Generate a complete ad creative for:\n\nBRAND: ${b.brand || "Brand"}\nPRODUCT: ${b.product || "Product"}\nAUDIENCE: ${b.audience || "General"}\nOBJECTIVE: ${b.objective || "Conversions"}\nPLATFORM: ${b.platform || "TikTok"}\n\nFORMAT: ${format.name} \u2014 ${format.desc}\nSUB-FORMAT: ${sub.name}\nWHEN TO USE: ${sub.quando || "N/A"}\nHOOK STYLE: ${sub.hook || "N/A"}\nSTRUCTURE: ${sub.estrutura || "N/A"}\nPRODUCTION TIP: ${sub.dica || "N/A"}\n\nGenerate a full, production-ready ad script with:\n1. **Opening Hook** (first 3 seconds) \u2014 3+ variations\n2. **Scene-by-scene breakdown** with timing [0:00-0:03], visual direction, dialogue/text overlay\n3. **CTA** \u2014 3 options\n4. **Platform adaptation notes**\n5. **Music/Sound direction**\n6. **Estimated total duration**\n7. **Shot list** (camera angles, movements)\n\nBe specific, creative, and production-ready. Output in clean markdown.`;
-  };
-
   const handleGenerate = async () => {
     if (!genSub || !genFormat) return;
     setGenerating(true);
     setOutput("");
 
     try {
-      const prompt = buildPrompt(genFormat, genSub, brief);
-      const res = await fetch("https://opencode.ai/zen/v1/chat/completions", {
+      const res = await fetch("/api/generate", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${OPENCODE_KEY}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "deepseek-v4-flash-free",
-          messages: [
-            { role: "system", content: "You are AD.LIB Studio \u2014 an elite ad creative director and copywriter for paid social. Output in clean markdown with timing markers like [0:00-0:03]." },
-            { role: "user", content: prompt },
-          ],
-          max_tokens: 8192,
-          temperature: 0.8,
+          formatName: genFormat.name,
+          formatDesc: genFormat.desc,
+          subName: genSub.name,
+          quando: genSub.quando,
+          hook: genSub.hook,
+          estrutura: genSub.estrutura,
+          dica: genSub.dica,
+          brief: {
+            brand: brief.brand || "Brand",
+            product: brief.product || genFormat.name,
+            audience: brief.audience || "general",
+            platform: brief.platform || "tiktok",
+            objective: "conversions",
+          },
         }),
       });
       const data = await res.json();
-      const msg = data.choices?.[0]?.message;
-      const content = msg?.content || msg?.reasoning_content || "No content generated";
-      setOutput(content);
+      setOutput(data.script || data.error || "No content generated");
     } catch (e: any) {
       setOutput("Error: " + e.message);
     }
