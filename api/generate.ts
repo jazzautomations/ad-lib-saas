@@ -1,9 +1,8 @@
-import { FORMATS } from "../src/lib/formats";
-import type { AdFormat, SubFormat } from "../src/lib/types";
+import FORMATS from "./formats.json";
 
 const OPENCODE_ZEN_URL = "https://opencode.ai/zen/v1/chat/completions";
 const OPENCODE_ZEN_KEY = process.env.OPENCODE_ZEN_API_KEY || "";
-const MODEL = "big-pickle";
+const MODEL = "deepseek-v4-flash-free";
 
 const SYSTEM_PROMPT = `You are AD.LIB Studio, an expert ad creative director and copywriter.
 Given a brief and an ad format/sub-format, you generate:
@@ -17,7 +16,7 @@ Given a brief and an ad format/sub-format, you generate:
 Be specific, creative, and production-ready. Output in clean markdown.
 Use timing markers like [0:00-0:03], [0:03-0:07], etc.`;
 
-function buildPrompt(format: AdFormat, sub: SubFormat, brief: any): string {
+function buildPrompt(format: any, sub: any, brief: any): string {
   return `Generate a complete ad creative for:
 
 BRAND: ${brief.brand || "Brand"}
@@ -57,10 +56,10 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "formatId and subIndex required" });
     }
 
-    const format = FORMATS.find((f) => f.id === Number(formatId));
+    const format = FORMATS.find((f: any) => f.id === Number(formatId));
     if (!format) return res.status(404).json({ error: "Format not found" });
 
-    const sub = format.subs[Number(subIndex)];
+    const sub = (format as any).subs[Number(subIndex)];
     if (!sub) return res.status(404).json({ error: "Sub-format not found" });
 
     if (!OPENCODE_ZEN_KEY) {

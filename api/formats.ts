@@ -1,4 +1,4 @@
-import { FORMATS } from "../src/lib/formats";
+import FORMATS from "./formats.json";
 
 export default function handler(req: any, res: any) {
   if (req.method !== "GET") {
@@ -8,19 +8,18 @@ export default function handler(req: any, res: any) {
   const { id, media, funnel } = req.query;
 
   if (id) {
-    const fmt = FORMATS.find((f) => f.id === Number(id));
+    const fmt = FORMATS.find((f: any) => f.id === Number(id));
     if (!fmt) return res.status(404).json({ error: "Format not found" });
     return res.json(fmt);
   }
 
   let results = [...FORMATS];
-  if (media) results = results.filter((f) => f.tipos.includes(media as string));
-  if (funnel)
-    results = results.filter((f) => f.funil.includes(funnel as string));
+  if (media) results = results.filter((f: any) => f.tipos.includes(media));
+  if (funnel) results = results.filter((f: any) => f.funil.includes(funnel));
 
   return res.json({
     formats: results,
     total: results.length,
-    subFormats: results.reduce((a, f) => a + f.subs.length, 0),
+    subFormats: results.reduce((a: number, f: any) => a + f.subs.length, 0),
   });
 }
