@@ -13,5 +13,5 @@
     "noEmit": true,
     "outDir": "./dist"
   },
-  "include": ["lib", "src"]
+  "include": ["api", "lib", "src"]
 }
