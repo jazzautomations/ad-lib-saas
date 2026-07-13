@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { FORMATS } from "./lib/formats";
 import type { AdFormat, SubFormat, FunnelStage } from "./lib/types";
 
@@ -10,10 +10,28 @@ const tierColors: Record<string, { bg: string; text: string; border: string }> =
   btm: { bg: "#0e2c3d", text: "#5bc8f5", border: "rgba(91,200,245,.3)" },
 };
 
-const tierNames: Record<string, string> = {
-  top: "Top of Funnel",
-  mid: "Middle of Funnel",
-  btm: "Bottom of Funnel",
+// Pipeline agent states
+interface AgentState {
+  name: string;
+  label: string;
+  model: string;
+  status: "pending" | "running" | "done" | "error";
+  result?: unknown;
+  error?: string;
+}
+
+const AGENT_ORDER = ["strategist", "copywriter", "director", "qa"];
+const AGENT_LABELS: Record<string, string> = {
+  strategist: "Strategist",
+  copywriter: "Copywriter",
+  director: "Director",
+  qa: "QA Review",
+};
+const AGENT_ICONS: Record<string, string> = {
+  strategist: "🧠",
+  copywriter: "✍️",
+  director: "🎬",
+  qa: "✅",
 };
 
 export default function App() {
@@ -24,130 +42,138 @@ export default function App() {
   const [filterTier, setFilterTier] = useState<string>("all");
 
   // Studio
-  const [brief, setBrief] = useState({ brand: "", product: "", audience: "", platform: "tiktok" });
+  const [brief, setBrief] = useState({ brand: "", product: "", description: "", audience: "", objective: "", funnelStage: "mid", platforms: ["tiktok", "instagram"], tone: "" });
   const [suggestions, setSuggestions] = useState<AdFormat[] | null>(null);
 
-  // Generate
-  const [genFormat, setGenFormat] = useState<AdFormat | null>(null);
-  const [genSub, setGenSub] = useState<SubFormat | null>(null);
+  // Generate (pipeline)
   const [generating, setGenerating] = useState(false);
-  const [output, setOutput] = useState("");
+  const [agents, setAgents] = useState<AgentState[]>(
+    AGENT_ORDER.map(name => ({ name, label: AGENT_LABELS[name], model: "", status: "pending" as const }))
+  );
+  const [pipelineResult, setPipelineResult] = useState<unknown>(null);
+  const [pipelineError, setPipelineError] = useState("");
 
   const filtered = useMemo(() => {
     let list = FORMATS;
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(f =>
-        f.name.toLowerCase().includes(q) ||
-        f.desc.toLowerCase().includes(q) ||
+        f.name.toLowerCase().includes(q) || f.desc.toLowerCase().includes(q) ||
         f.subs.some(s => s.name.toLowerCase().includes(q))
       );
     }
-    if (filterTier !== "all") {
-      list = list.filter(f => f.funil.includes(filterTier as FunnelStage));
-    }
+    if (filterTier !== "all") list = list.filter(f => f.funil.includes(filterTier as FunnelStage));
     return list;
   }, [search, filterTier]);
 
-  const handleSuggest = async () => {
-    if (!brief.brand && !brief.product) return;
-    // Score formats based on brief keywords
-    const keywords = (brief.brand + " " + brief.product + " " + brief.audience + " " + brief.platform).toLowerCase();
+  const handleSuggest = () => {
+    const keywords = (brief.brand + " " + brief.product + " " + brief.audience).toLowerCase();
     const scored = FORMATS.map(f => ({
       format: f,
-      score: f.subs.filter(s =>
-        (s.name + " " + (s.quando || "") + " " + (s.dica || "")).toLowerCase().split(" ").some((w: string) => keywords.includes(w))
-      ).length + (f.desc.toLowerCase().split(" ").some((w: string) => keywords.includes(w)) ? 2 : 0)
+      score: f.subs.filter(s => (s.name + " " + (s.quando || "") + " " + (s.dica || "")).toLowerCase().split(" ").some(w => keywords.includes(w))).length
+        + (f.desc.toLowerCase().split(" ").some(w => keywords.includes(w)) ? 2 : 0)
     })).sort((a, b) => b.score - a.score).slice(0, 5);
     setSuggestions(scored.map(s => s.format));
   };
 
   const startGenerate = (f: AdFormat, s: SubFormat) => {
-    setGenFormat(f);
-    setGenSub(s);
     setPanel("generate");
-    setOutput("");
+    runPipeline(f, s);
   };
 
-  const handleGenerate = async () => {
-    if (!genSub || !genFormat) return;
+  const runPipeline = async (format: AdFormat, sub: SubFormat) => {
     setGenerating(true);
-    setOutput("");
+    setPipelineResult(null);
+    setPipelineError("");
+    setAgents(AGENT_ORDER.map(name => ({ name, label: AGENT_LABELS[name], model: "", status: "pending" as const })));
+
+    const fullBrief = {
+      brand: brief.brand || "Brand",
+      product: brief.product || format.name,
+      description: brief.description || format.desc,
+      audience: brief.audience || "general audience",
+      objective: brief.objective || "drive conversions",
+      funnelStage: brief.funnelStage || "mid",
+      platforms: brief.platforms.length ? brief.platforms : ["tiktok", "instagram"],
+      tone: brief.tone || "",
+      formats: [format.name],
+    };
 
     try {
-      const res = await fetch("/api/generate", {
+      const res = await fetch("/api/pipeline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          formatName: genFormat.name,
-          formatDesc: genFormat.desc,
-          subName: genSub.name,
-          quando: genSub.quando,
-          hook: genSub.hook,
-          estrutura: genSub.estrutura,
-          dica: genSub.dica,
-          brief: {
-            brand: brief.brand || "Brand",
-            product: brief.product || genFormat.name,
-            audience: brief.audience || "general",
-            platform: brief.platform || "tiktok",
-            objective: "conversions",
-          },
-        }),
+        body: JSON.stringify(fullBrief),
       });
 
-      const contentType = res.headers.get("content-type") || "";
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setPipelineError(err.error || `Request failed (${res.status})`);
+        setGenerating(false);
+        return;
+      }
 
-      // SSE streaming response (legacy fallback)
-      if (contentType.includes("text/event-stream")) {
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let text = "";
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) { setGenerating(false); return; }
 
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
-            for (const line of lines) {
-              if (line.startsWith("data: ")) {
-                const data = line.slice(6).trim();
-                if (data === "[DONE]") break;
-                try {
-                  const parsed = JSON.parse(data);
-                  if (parsed.content) {
-                    text += parsed.content;
-                    setOutput(text);
-                  }
-                } catch {}
-              }
-            }
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // keep incomplete line
+
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            const eventType = line.slice(7).trim();
+            // next data line
+            continue;
+          }
+          if (line.startsWith("data: ")) {
+            const dataStr = line.slice(6).trim();
+            if (!dataStr) continue;
+            try {
+              const data = JSON.parse(dataStr);
+              handleSSEEvent(data);
+            } catch {}
           }
         }
-        if (!text) setOutput("No content generated");
-        setGenerating(false);
-        return;
-      }
-
-      // JSON response (current)
-      const data = await res.json();
-
-      if (!res.ok) {
-        setOutput(data.error || `Request failed (${res.status})`);
-        setGenerating(false);
-        return;
-      }
-
-      if (data.content) {
-        setOutput(data.content);
-      } else {
-        setOutput("AI returned an empty response. Check the API key or try again.");
       }
     } catch (e: any) {
-      setOutput("Error: " + e.message);
+      setPipelineError(e.message || "Connection failed");
     }
     setGenerating(false);
+  };
+
+  const handleSSEEvent = (data: any) => {
+    // Check if it has agent field — it's an agent event
+    if (data.agent && data.label) {
+      if (data.result !== undefined) {
+        // agent_complete
+        setAgents(prev => prev.map(a =>
+          a.name === data.agent ? { ...a, status: "done" as const, result: data.result } : a
+        ));
+      } else if (data.error) {
+        // agent_error
+        setAgents(prev => prev.map(a =>
+          a.name === data.agent ? { ...a, status: "error" as const, error: data.error } : a
+        ));
+      } else if (data.model) {
+        // agent_start
+        setAgents(prev => prev.map(a =>
+          a.name === data.agent ? { ...a, status: "running" as const, model: data.model } : a
+        ));
+      }
+    }
+    // complete event — the full package
+    if (data.generatedAt || data.strategy || data.scripts) {
+      setPipelineResult(data);
+    }
   };
 
   const allSubs = FORMATS.reduce((a, f) => a + f.subs.length, 0);
@@ -196,14 +222,13 @@ export default function App() {
           <StudioView
             brief={brief} onChange={(k, v) => setBrief(b => ({ ...b, [k]: v }))}
             suggestions={suggestions} onSuggest={handleSuggest}
-            onSelect={(f) => { setGenFormat(f); setPanel("library"); }}
+            onSelect={(f) => { setPanel("generate"); }}
           />
         )}
         {panel === "generate" && (
           <GenerateView
-            format={genFormat} sub={genSub}
-            generating={generating} output={output}
-            onGenerate={handleGenerate}
+            generating={generating} agents={agents} result={pipelineResult} error={pipelineError}
+            brief={brief}
           />
         )}
       </main>
@@ -211,7 +236,7 @@ export default function App() {
   );
 }
 
-/* ───────────────────── COMPONENTS ───────────────────── */
+/* ───────────────────── LIBRARY ───────────────────── */
 
 function LibraryView({ formats, selected, onSelect, expandedId, onToggle, search, onSearch, filterTier, onFilterTier, onGenerate }: {
   formats: AdFormat[]; selected: AdFormat | null; onSelect: (f: AdFormat | null) => void;
@@ -222,7 +247,6 @@ function LibraryView({ formats, selected, onSelect, expandedId, onToggle, search
 }) {
   return (
     <>
-      {/* Sidebar */}
       <aside className="flex-shrink-0 flex flex-col overflow-hidden" style={{ width: 220, borderRight: "1px solid #1d1d1d", background: "#0e0e0e" }}>
         <div className="p-2.5 border-b" style={{ borderColor: "#1d1d1d" }}>
           <input value={search} onChange={e => onSearch(e.target.value)} placeholder="Search…"
@@ -263,7 +287,6 @@ function LibraryView({ formats, selected, onSelect, expandedId, onToggle, search
         </div>
       </aside>
 
-      {/* Detail panel */}
       <section className="flex-1 overflow-y-auto">
         {selected ? (
           <div className="p-8 pb-16">
@@ -278,14 +301,12 @@ function LibraryView({ formats, selected, onSelect, expandedId, onToggle, search
                 <h1 className="text-3xl font-bold leading-none" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "2px" }}>
                   {selected.name}
                 </h1>
-                <p className="text-sm mt-2" style={{ color: "#999" }}>
-                  {selected.desc}
-                </p>
+                <p className="text-sm mt-2" style={{ color: "#999" }}>{selected.desc}</p>
                 <div className="flex flex-wrap gap-1.5 mt-3">
                   {selected.tipos.map(t => (
                     <span key={t} className="text-[8px] tracking-wider uppercase px-2 py-0.5 rounded" style={{ fontFamily: "'DM Mono',monospace", color: t === "video" ? "#5bc8f5" : "#c084fc", border: t === "video" ? "1px solid rgba(91,200,245,.25)" : "1px solid rgba(192,132,252,.25)", background: t === "video" ? "rgba(91,200,245,.07)" : "rgba(192,132,252,.07)" }}>
-                    {t.toUpperCase()}
-                  </span>
+                      {t.toUpperCase()}
+                    </span>
                   ))}
                   {selected.funil.map(t => (
                     <span key={t} className="text-[8px] tracking-wider uppercase px-2 py-0.5 rounded" style={{ fontFamily: "'DM Mono',monospace", color: tierColors[t].text, border: `1px solid ${tierColors[t].border}`, background: tierColors[t].bg }}>
@@ -298,7 +319,7 @@ function LibraryView({ formats, selected, onSelect, expandedId, onToggle, search
 
             <div className="mt-8">
               <span className="text-[9px] tracking-widest uppercase block mb-4" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>
-                Sub-formats — click to expand
+                Sub-formats
               </span>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(340px,1fr))" }}>
                 {selected.subs.map((s, i) => (
@@ -307,24 +328,13 @@ function LibraryView({ formats, selected, onSelect, expandedId, onToggle, search
                     <div className="p-4">
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="flex-1">
-                          <div className="text-[8px] tracking-wider uppercase mb-1" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>
-                            Sub-Format
-                          </div>
+                          <div className="text-[8px] tracking-wider uppercase mb-1" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>Sub-Format</div>
                           <h3 className="text-sm font-semibold">{s.name}</h3>
                         </div>
                         <div className="flex gap-1 flex-shrink-0">
                           <span className="text-[8px] tracking-wider uppercase px-1.5 py-0.5 rounded" style={{ fontFamily: "'DM Mono',monospace", color: s.tipo === "video" ? "#5bc8f5" : "#c084fc", border: s.tipo === "video" ? "1px solid rgba(91,200,245,.25)" : "1px solid rgba(192,132,252,.25)" }}>
                             {s.tipo?.toUpperCase()}
                           </span>
-                          {s.funil && (
-                            <span className="text-[8px] tracking-wider uppercase px-1.5 py-0.5 rounded"
-                              style={{ fontFamily: "'DM Mono',monospace",
-                                color: tierColors[Array.isArray(s.funil) ? s.funil[0] : s.funil]?.text || "#555",
-                                border: `1px solid ${tierColors[Array.isArray(s.funil) ? s.funil[0] : s.funil]?.border || "#282828"}`,
-                                background: tierColors[Array.isArray(s.funil) ? s.funil[0] : s.funil]?.bg || "transparent" }}>
-                              {Array.isArray(s.funil) ? s.funil[0].toUpperCase() : s.funil.toUpperCase()}
-                            </span>
-                          )}
                         </div>
                       </div>
                       <p className="text-xs mt-1" style={{ color: "#999", lineHeight: 1.6 }}>{s.quando}</p>
@@ -356,14 +366,10 @@ function LibraryView({ formats, selected, onSelect, expandedId, onToggle, search
                 AD.<em style={{ color: "#e63946", fontStyle: "normal" }}>LIB</em> Creative Library
               </h1>
               <p className="text-sm max-w-md mx-auto mb-8" style={{ color: "#999", lineHeight: 1.7 }}>
-                A complete taxonomy of ad formats and sub-formats for paid social.
-                Pick any format to see structure, hooks, and production notes.
+                A complete taxonomy of ad formats for paid social. Pick any format to see structure, hooks, and generate creatives with the 4-agent pipeline.
               </p>
               <div className="flex gap-px mb-12">
-                {[
-                  { n: FORMATS.length, l: "Formats" },
-                  { n: FORMATS.reduce((a, f) => a + f.subs.length, 0), l: "Sub-formats" },
-                ].map(s => (
+                {[{ n: FORMATS.length, l: "Formats" }, { n: allSubs(FORMATS), l: "Sub-formats" }].map(s => (
                   <div key={s.l} className="px-6 py-3 text-center" style={{ background: "#131313", border: "1px solid #1d1d1d" }}>
                     <div className="text-2xl font-bold" style={{ fontFamily: "'Bebas Neue',sans-serif", color: "#e63946" }}>{s.n}</div>
                     <div className="text-[8px] tracking-wider uppercase mt-1" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>{s.l}</div>
@@ -378,27 +384,39 @@ function LibraryView({ formats, selected, onSelect, expandedId, onToggle, search
   );
 }
 
+function allSubs(formats: AdFormat[]) { return formats.reduce((a, f) => a + f.subs.length, 0); }
+
+/* ───────────────────── STUDIO ───────────────────── */
+
 function StudioView({ brief, onChange, suggestions, onSuggest, onSelect }: {
-  brief: { brand: string; product: string; audience: string; platform: string };
-  onChange: (k: string, v: string) => void;
+  brief: { brand: string; product: string; description: string; audience: string; objective: string; funnelStage: string; platforms: string[]; tone: string };
+  onChange: (k: string, v: any) => void;
   suggestions: AdFormat[] | null;
   onSuggest: () => void;
   onSelect: (f: AdFormat) => void;
 }) {
   const platforms = ["tiktok", "instagram", "facebook", "youtube", "linkedin", "twitter"];
+  const funnelStages = [
+    { v: "top", l: "Awareness", c: "#3ddc84" },
+    { v: "mid", l: "Consideration", c: "#f4c542" },
+    { v: "btm", l: "Conversion", c: "#5bc8f5" },
+  ];
 
   return (
     <div className="flex-1 overflow-y-auto p-8 pb-16">
       <h1 className="text-3xl font-bold leading-none mb-1" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "2px" }}>
         Creative <span style={{ color: "#e63946" }}>Studio</span>
       </h1>
-      <p className="text-sm mb-8" style={{ color: "#999" }}>Tell us about your campaign and we'll suggest the best formats.</p>
+      <p className="text-sm mb-8" style={{ color: "#999" }}>Fill in your brief — the 4-agent pipeline will generate complete ad packages.</p>
 
-      <div className="max-w-2xl grid gap-4 mb-8">
+      <div className="max-w-2xl grid gap-4 mb-6">
         {[
-          { k: "brand", l: "Brand", ph: "e.g. Nike" },
-          { k: "product", l: "Product / Offer", ph: "e.g. Air Max 2026" },
-          { k: "audience", l: "Target Audience", ph: "e.g. Athletes 18-35" },
+          { k: "brand", l: "Brand", ph: "Nike" },
+          { k: "product", l: "Product / Offer", ph: "Air Max 2026" },
+          { k: "description", l: "Product Description", ph: "Lightweight running shoe with React foam..." },
+          { k: "audience", l: "Target Audience", ph: "Runners 18-35, urban, active lifestyle" },
+          { k: "objective", l: "Campaign Objective", ph: "Drive signups for limited drop" },
+          { k: "tone", l: "Tone (optional)", ph: "Bold, energetic, aspirational" },
         ].map(f => (
           <div key={f.k}>
             <label className="text-[9px] tracking-widest uppercase block mb-1.5" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>{f.l}</label>
@@ -407,23 +425,46 @@ function StudioView({ brief, onChange, suggestions, onSuggest, onSelect }: {
               style={{ background: "#131313", border: "1px solid #1d1d1d", color: "#f0f0f0" }} />
           </div>
         ))}
+
         <div>
-          <label className="text-[9px] tracking-widest uppercase block mb-1.5" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>Platform</label>
+          <label className="text-[9px] tracking-widest uppercase block mb-1.5" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>Funnel Stage</label>
+          <div className="flex gap-2">
+            {funnelStages.map(f => (
+              <button key={f.v} onClick={() => onChange("funnelStage", f.v)}
+                className="flex-1 text-xs py-2 rounded cursor-pointer"
+                style={{
+                  background: brief.funnelStage === f.v ? f.c + "15" : "#131313",
+                  border: `1px solid ${brief.funnelStage === f.v ? f.c : "#1d1d1d"}`,
+                  color: brief.funnelStage === f.v ? f.c : "#555",
+                  fontFamily: "'DM Mono',monospace",
+                }}>
+                {f.l}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[9px] tracking-widest uppercase block mb-1.5" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>Platforms</label>
           <div className="flex flex-wrap gap-1.5">
             {platforms.map(p => (
-              <button key={p} onClick={() => onChange("platform", p)}
+              <button key={p} onClick={() => {
+                const has = brief.platforms.includes(p);
+                onChange("platforms", has ? brief.platforms.filter(x => x !== p) : [...brief.platforms, p]);
+              }}
                 className="text-[9px] tracking-wider uppercase px-3 py-1.5 rounded cursor-pointer whitespace-nowrap"
                 style={{
                   fontFamily: "'DM Mono',monospace", letterSpacing: "1px",
-                  background: brief.platform === p ? "#e63946" : "#131313",
-                  border: `1px solid ${brief.platform === p ? "#e63946" : "#1d1d1d"}`,
-                  color: brief.platform === p ? "#fff" : "#555"
+                  background: brief.platforms.includes(p) ? "#e63946" : "#131313",
+                  border: `1px solid ${brief.platforms.includes(p) ? "#e63946" : "#1d1d1d"}`,
+                  color: brief.platforms.includes(p) ? "#fff" : "#555"
                 }}>
                 {p}
               </button>
             ))}
           </div>
         </div>
+
         <button onClick={onSuggest}
           className="text-[9px] tracking-wider uppercase py-3 rounded cursor-pointer border-none"
           style={{ fontFamily: "'DM Mono',monospace", letterSpacing: "1px", background: "#e63946", color: "#fff" }}>
@@ -433,9 +474,7 @@ function StudioView({ brief, onChange, suggestions, onSuggest, onSelect }: {
 
       {suggestions && (
         <div className="max-w-2xl">
-          <h2 className="text-sm font-semibold mb-3" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "1.5px" }}>
-            Recommended Formats
-          </h2>
+          <h2 className="text-sm font-semibold mb-3" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "1.5px" }}>Recommended Formats</h2>
           <div className="grid gap-2">
             {suggestions.map((f, i) => (
               <div key={i} className="flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-colors"
@@ -456,63 +495,206 @@ function StudioView({ brief, onChange, suggestions, onSuggest, onSelect }: {
   );
 }
 
-function GenerateView({ format, sub, generating, output, onGenerate }: {
-  format: AdFormat | null; sub: SubFormat | null;
-  generating: boolean; output: string;
-  onGenerate: () => void;
+/* ───────────────────── GENERATE (PIPELINE) ───────────────────── */
+
+function GenerateView({ generating, agents, result, error, brief }: {
+  generating: boolean; agents: AgentState[]; result: unknown; error: string;
+  brief: any;
 }) {
-  if (!format || !sub) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-12 text-center">
-        <div>
-          <div className="text-5xl mb-5 opacity-60">🎬</div>
-          <h2 className="text-2xl font-bold" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "2px" }}>
-            Select a <span style={{ color: "#e63946" }}>Format</span>
-          </h2>
-          <p className="text-sm mt-2" style={{ color: "#999" }}>
-            Browse the Library and click "Generate Creative →" on any sub-format.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  // Copy result as JSON
+  const copyJSON = () => {
+    if (result) {
+      navigator.clipboard.writeText(JSON.stringify(result, null, 2));
+    }
+  };
+
+  // Extract scripts from result for display
+  const pkg = result as any;
+  const hasResult = !!pkg?.generatedAt;
 
   return (
-    <div className="flex-1 overflow-y-auto p-8 pb-16">
-      <div className="flex items-center gap-4 mb-6">
-        <span className="text-3xl">{format.icon}</span>
-        <div>
-          <h1 className="text-2xl font-bold leading-none" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "2px" }}>
-            Generate <span style={{ color: format.color }}>{format.name}</span>
-          </h1>
-          <p className="text-sm mt-1" style={{ color: "#999" }}>{sub.name}</p>
-        </div>
-      </div>
+    <div className="flex-1 overflow-y-auto p-8 pb-16" ref={resultRef}>
+      <h1 className="text-2xl font-bold leading-none mb-1" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "2px" }}>
+        Agent <span style={{ color: "#e63946" }}>Pipeline</span>
+      </h1>
+      <p className="text-sm mb-6" style={{ color: "#999" }}>
+        4 agents × OpenCode Zen (free models) → complete creative package
+      </p>
 
-      <div className="mb-6 p-4 rounded-xl" style={{ background: "#131313", border: "1px solid #1d1d1d" }}>
-        <div className="grid gap-3 max-w-xl">
-          {[
-            { k: "hook", l: "Hook", v: sub.hook },
-            { k: "estrutura", l: "Structure", v: sub.estrutura },
-            { k: "dica", l: "Tip", v: sub.dica },
-          ].map(f => (
-            <div key={f.k}>
-              <div className="text-[9px] tracking-widest uppercase mb-1" style={{ fontFamily: "'DM Mono',monospace", color: format.color }}>{f.l}</div>
-              <div className="text-xs" style={{ color: "#ccc" }}>{f.v}</div>
+      {/* Agent Progress */}
+      <div className="grid gap-2 mb-8" style={{ maxWidth: 600 }}>
+        {agents.map((a, i) => (
+          <div key={a.name} className="flex items-center gap-3 px-4 py-3 rounded-lg"
+            style={{
+              background: a.status === "running" ? "rgba(230,57,70,.06)" : a.status === "done" ? "rgba(61,220,132,.04)" : a.status === "error" ? "rgba(230,57,70,.04)" : "#131313",
+              border: `1px solid ${a.status === "running" ? "#e63946" : a.status === "done" ? "#3ddc84" : a.status === "error" ? "#e63946" : "#1d1d1d"}`,
+            }}>
+            <span className="text-lg">{AGENT_ICONS[a.name]}</span>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "1px" }}>{a.label}</span>
+                {a.model && (
+                  <span className="text-[8px] px-1.5 py-0.5 rounded" style={{ fontFamily: "'DM Mono',monospace", color: "#999", background: "#181818", border: "1px solid #282828" }}>
+                    {a.model}
+                  </span>
+                )}
+              </div>
+              {a.error && <div className="text-[10px] mt-0.5" style={{ color: "#e63946" }}>{a.error}</div>}
             </div>
-          ))}
-        </div>
+            <div className="flex-shrink-0">
+              {a.status === "pending" && <span className="text-[9px]" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>waiting</span>}
+              {a.status === "running" && (
+                <span className="text-[9px] flex items-center gap-1" style={{ fontFamily: "'DM Mono',monospace", color: "#e63946" }}>
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#e63946] animate-pulse" /> running
+                </span>
+              )}
+              {a.status === "done" && <span className="text-[9px]" style={{ fontFamily: "'DM Mono',monospace", color: "#3ddc84" }}>✓ done</span>}
+              {a.status === "error" && <span className="text-[9px]" style={{ fontFamily: "'DM Mono',monospace", color: "#e63946" }}>✗ error</span>}
+            </div>
+          </div>
+        ))}
       </div>
 
-      <button onClick={onGenerate} disabled={generating}
-        className="text-[9px] tracking-wider uppercase py-3 px-8 rounded cursor-pointer border-none disabled:opacity-50"
-        style={{ fontFamily: "'DM Mono',monospace", letterSpacing: "1px", background: format.color || "#e63946", color: "#fff" }}>
-        {generating ? "Generating…" : `Generate Creative →`}
-      </button>
+      {error && (
+        <div className="p-4 rounded-xl mb-6 text-sm" style={{ background: "rgba(230,57,70,.08)", border: "1px solid rgba(230,57,70,.3)", color: "#e63946" }}>
+          {error}
+        </div>
+      )}
 
-      {output && (
-        <div className="mt-6 p-4 rounded-xl whitespace-pre-wrap text-xs leading-relaxed" style={{ background: "#0e0e0e", border: "1px solid #1d1d1d", color: "#ccc", fontFamily: "'DM Mono',monospace", maxWidth: 720 }}>
-          {output}
+      {/* Results */}
+      {hasResult && (
+        <div className="mt-4">
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-lg font-bold" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "1.5px" }}>
+              Creative Package
+            </h2>
+            <button onClick={copyJSON}
+              className="text-[9px] tracking-wider uppercase px-3 py-1.5 rounded cursor-pointer"
+              style={{ fontFamily: "'DM Mono',monospace", background: "#131313", border: "1px solid #1d1d1d", color: "#999" }}>
+              Copy JSON
+            </button>
+          </div>
+
+          {/* Strategy */}
+          {pkg.strategy && pkg.strategy.analysis && (
+            <div className="mb-6 p-4 rounded-xl" style={{ background: "#131313", border: "1px solid #1d1d1d" }}>
+              <div className="text-[9px] tracking-widest uppercase mb-2" style={{ fontFamily: "'DM Mono',monospace", color: "#3ddc84" }}>🧠 Strategy</div>
+              <p className="text-sm" style={{ color: "#ccc", lineHeight: 1.7 }}>{pkg.strategy.analysis}</p>
+              {pkg.strategy.selectedFormats && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {pkg.strategy.selectedFormats.map((f: any, i: number) => (
+                    <div key={i} className="px-3 py-2 rounded-lg text-xs" style={{ background: "#181818", border: "1px solid #282828" }}>
+                      <span className="font-semibold">{f.formatName}</span>
+                      <span style={{ color: "#666" }}> — </span>
+                      <span style={{ color: "#999" }}>{f.angle}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Scripts */}
+          {pkg.scripts && Array.isArray(pkg.scripts) && (
+            <div className="mb-6">
+              <div className="text-[9px] tracking-widest uppercase mb-3" style={{ fontFamily: "'DM Mono',monospace", color: "#f4c542" }}>✍️ Scripts</div>
+              {pkg.scripts.map((s: any, i: number) => (
+                <div key={i} className="mb-3 p-4 rounded-xl" style={{ background: "#131313", border: "1px solid #1d1d1d" }}>
+                  <div className="text-xs font-semibold mb-2" style={{ fontFamily: "'Bebas Neue',sans-serif", letterSpacing: "1px" }}>
+                    {s.formatName} — {s.subFormatName}
+                  </div>
+                  <pre className="text-xs whitespace-pre-wrap" style={{ color: "#ccc", fontFamily: "'DM Mono',monospace", lineHeight: 1.7 }}>
+                    {s.script}
+                  </pre>
+                  {s.hookOptions && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {s.hookOptions.map((h: string, j: number) => (
+                        <span key={j} className="text-[9px] px-2 py-1 rounded" style={{ background: "#181818", border: "1px solid #282828", color: "#999" }}>
+                          Hook {j + 1}: {h.slice(0, 60)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Visual Direction */}
+          {pkg.visualDirection && Array.isArray(pkg.visualDirection) && (
+            <div className="mb-6">
+              <div className="text-[9px] tracking-widest uppercase mb-3" style={{ fontFamily: "'DM Mono',monospace", color: "#5bc8f5" }}>🎬 Visual Direction</div>
+              {pkg.visualDirection.map((v: any, i: number) => (
+                <div key={i} className="mb-3 p-4 rounded-xl" style={{ background: "#131313", border: "1px solid #1d1d1d" }}>
+                  <div className="text-xs font-semibold mb-1" style={{ fontFamily: "'Bebas Neue',sans-serif" }}>{v.formatName}</div>
+                  <p className="text-xs mb-2" style={{ color: "#999" }}>{v.visualStyle}</p>
+                  {v.colorPalette && (
+                    <div className="flex gap-1 mb-2">
+                      {v.colorPalette.map((c: string, j: number) => (
+                        <div key={j} className="w-6 h-6 rounded" style={{ background: c, border: "1px solid #282828" }} title={c} />
+                      ))}
+                    </div>
+                  )}
+                  {v.shots && v.shots.length > 0 && (
+                    <div className="grid gap-1 mt-2">
+                      {v.shots.slice(0, 4).map((shot: any, j: number) => (
+                        <div key={j} className="text-[10px] px-2 py-1 rounded" style={{ background: "#181818", fontFamily: "'DM Mono',monospace" }}>
+                          <span style={{ color: "#5bc8f5" }}>{shot.time}</span>
+                          <span style={{ color: "#666" }}> — </span>
+                          <span style={{ color: "#ccc" }}>{shot.description?.slice(0, 80)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* QA Review */}
+          {pkg.qaReview && (
+            <div className="p-4 rounded-xl" style={{
+              background: pkg.qaReview.verdict === "SHIP" ? "rgba(61,220,132,.04)" : "rgba(244,197,66,.04)",
+              border: `1px solid ${pkg.qaReview.verdict === "SHIP" ? "rgba(61,220,132,.3)" : "rgba(244,197,66,.3)"}`,
+            }}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[9px] tracking-widest uppercase" style={{ fontFamily: "'DM Mono',monospace", color: "#555" }}>QA Review</span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded" style={{
+                  fontFamily: "'Bebas Neue',sans-serif",
+                  background: pkg.qaReview.verdict === "SHIP" ? "rgba(61,220,132,.15)" : "rgba(244,197,66,.15)",
+                  color: pkg.qaReview.verdict === "SHIP" ? "#3ddc84" : "#f4c542",
+                }}>
+                  {pkg.qaReview.verdict} {pkg.qaReview.overallScore}/100
+                </span>
+              </div>
+              {pkg.qaReview.strengths && (
+                <div className="text-xs mb-1" style={{ color: "#3ddc84" }}>
+                  {pkg.qaReview.strengths.map((s: string) => `✓ ${s}`).join(" · ")}
+                </div>
+              )}
+              {pkg.qaReview.issues && (
+                <div className="text-xs" style={{ color: "#f4c542" }}>
+                  {pkg.qaReview.issues.map((s: string) => `⚠ ${s}`).join("\n")}
+                </div>
+              )}
+              {pkg.qaReview.finalNotes && (
+                <p className="text-xs mt-2" style={{ color: "#999" }}>{pkg.qaReview.finalNotes}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!generating && !hasResult && !error && (
+        <div className="text-center py-16">
+          <div className="text-4xl mb-4 opacity-40">⚡</div>
+          <p className="text-sm" style={{ color: "#555" }}>
+            Open the Library → pick a format → click "Generate Creative"<br />
+            The pipeline runs Strategist → Copywriter → Director → QA automatically.
+          </p>
         </div>
       )}
     </div>

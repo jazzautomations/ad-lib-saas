@@ -6,6 +6,9 @@
   "functions": {
     "api/generate.ts": {
       "maxDuration": 30
+    },
+    "api/pipeline.ts": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
